@@ -11,12 +11,13 @@ use std::time::Duration;
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as B64;
-use einvoice_domain::{Signer, SignedDocument, build_signed_document};
+use einvoice_domain::{SignedDocument, Signer, build_signed_document};
 use serde_json::{Value, json};
 use time::OffsetDateTime;
 use tokio::sync::watch;
 use tracing::{error, info, instrument, warn};
 
+use super::{lhdn_variant_name, submit_backoff_for};
 use crate::lhdn::{
     LhdnClient, LhdnError, SubmissionDocument, SubmissionFormat, SubmissionResponse,
 };
@@ -152,12 +153,7 @@ impl Submitter {
                 warn!(error = %err, "domain rejected payload; marking failed");
                 // Local validation never reached LHDN — keep attempts as-is.
                 self.repo
-                    .fail_permanently(
-                        &event.invoice_id,
-                        event.outbox_id,
-                        invoice.attempts,
-                        &body,
-                    )
+                    .fail_permanently(&event.invoice_id, event.outbox_id, invoice.attempts, &body)
                     .await?;
                 return Ok(());
             }
@@ -250,7 +246,7 @@ impl Submitter {
         let new_attempts = current_attempts + 1;
         let last_error = err.to_string();
         let body = serde_json::to_string(&json!({
-            "kind": variant_name(&err),
+            "kind": lhdn_variant_name(&err),
             "message": last_error,
             "attempts": new_attempts,
         }))?;
@@ -266,7 +262,7 @@ impl Submitter {
                 .fail_permanently(&event.invoice_id, event.outbox_id, new_attempts, &body)
                 .await?;
         } else {
-            let backoff = backoff_for(new_attempts);
+            let backoff = submit_backoff_for(new_attempts);
             let next_at = OffsetDateTime::now_utc().unix_timestamp() + backoff.as_secs() as i64;
             warn!(
                 attempts = new_attempts,
@@ -286,45 +282,5 @@ impl Submitter {
                 .await?;
         }
         Ok(())
-    }
-}
-
-/// Backoff schedule: 30s, 2m, 10m, 1h (capped). Argument is the
-/// 1-based attempt counter *after* the failure was recorded.
-pub fn backoff_for(attempt: i64) -> Duration {
-    match attempt {
-        1 => Duration::from_secs(30),
-        2 => Duration::from_secs(120),
-        3 => Duration::from_secs(600),
-        _ => Duration::from_secs(3600),
-    }
-}
-
-fn variant_name(err: &LhdnError) -> &'static str {
-    match err {
-        LhdnError::Auth(_) => "Auth",
-        LhdnError::BadRequest(_) => "BadRequest",
-        LhdnError::NotFound => "NotFound",
-        LhdnError::Conflict(_) => "Conflict",
-        LhdnError::RateLimited { .. } => "RateLimited",
-        LhdnError::Server { .. } => "Server",
-        LhdnError::Transport(_) => "Transport",
-        LhdnError::Schema(_) => "Schema",
-        LhdnError::Storage(_) => "Storage",
-        LhdnError::Config(_) => "Config",
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn backoff_progression_matches_plan() {
-        assert_eq!(backoff_for(1), Duration::from_secs(30));
-        assert_eq!(backoff_for(2), Duration::from_secs(120));
-        assert_eq!(backoff_for(3), Duration::from_secs(600));
-        assert_eq!(backoff_for(4), Duration::from_secs(3600));
-        assert_eq!(backoff_for(8), Duration::from_secs(3600));
     }
 }

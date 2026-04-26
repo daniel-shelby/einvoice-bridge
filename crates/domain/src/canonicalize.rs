@@ -34,19 +34,13 @@ mod tests {
     #[test]
     fn sorts_object_keys_lexicographically() {
         let input = json!({"b": 1, "a": 2, "c": 3});
-        assert_eq!(
-            canonicalize_json(&input).unwrap(),
-            r#"{"a":2,"b":1,"c":3}"#
-        );
+        assert_eq!(canonicalize_json(&input).unwrap(), r#"{"a":2,"b":1,"c":3}"#);
     }
 
     #[test]
     fn strips_insignificant_whitespace() {
         let input: Value = serde_json::from_str(r#"{ "a" : 1 , "b" : [ 2 , 3 ] }"#).unwrap();
-        assert_eq!(
-            canonicalize_json(&input).unwrap(),
-            r#"{"a":1,"b":[2,3]}"#
-        );
+        assert_eq!(canonicalize_json(&input).unwrap(), r#"{"a":1,"b":[2,3]}"#);
     }
 
     #[test]
@@ -81,10 +75,7 @@ mod tests {
     fn named_escapes_quote_and_backslash() {
         // \n and \t use named escapes; quote and backslash are escaped.
         let input = json!("a\nb\tc\"d\\e");
-        assert_eq!(
-            canonicalize_json(&input).unwrap(),
-            r#""a\nb\tc\"d\\e""#
-        );
+        assert_eq!(canonicalize_json(&input).unwrap(), r#""a\nb\tc\"d\\e""#);
     }
 
     #[test]

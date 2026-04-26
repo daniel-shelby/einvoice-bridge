@@ -1,0 +1,32 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT\n                id          AS \"id!: String\",\n                invoice_ref AS \"invoice_ref!: String\",\n                lhdn_uuid   AS \"lhdn_uuid: String\"\n            FROM invoices\n            WHERE id = ?\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!: String",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "invoice_ref!: String",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "lhdn_uuid: String",
+        "ordinal": 2,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      false,
+      true
+    ]
+  },
+  "hash": "04d807e827a96a21d25cb96406a8e15a6f1bf21989950a09f0ed9a0a84f76ccb"
+}

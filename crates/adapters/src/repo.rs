@@ -161,10 +161,7 @@ impl InvoiceRepo {
     }
 
     /// Load the fields the submitter actually needs.
-    pub async fn load_for_submit(
-        &self,
-        id: &str,
-    ) -> Result<Option<InvoiceForSubmit>, RepoError> {
+    pub async fn load_for_submit(&self, id: &str) -> Result<Option<InvoiceForSubmit>, RepoError> {
         let row = sqlx::query_as!(
             InvoiceForSubmit,
             r#"
@@ -184,7 +181,9 @@ impl InvoiceRepo {
     }
 
     /// Atomically: mark the invoice as `Submitted`, persist the signed
-    /// UBL + signature + doc digest, and remove the outbox event.
+    /// UBL + signature + doc digest, drop the original `submit` outbox
+    /// event, and enqueue a fresh `poll` outbox event so the poller worker
+    /// can take it from here.
     pub async fn complete_submission(
         &self,
         invoice_id: &str,
@@ -222,7 +221,453 @@ impl InvoiceRepo {
         sqlx::query!("DELETE FROM outbox_events WHERE id = ?", outbox_id)
             .execute(&mut *tx)
             .await?;
+        sqlx::query!(
+            "INSERT INTO outbox_events (invoice_id, kind, available_at) VALUES (?, 'poll', ?)",
+            invoice_id,
+            now,
+        )
+        .execute(&mut *tx)
+        .await?;
         tx.commit().await?;
+        Ok(())
+    }
+
+    // ---------------------------------------------------------------------
+    // Poller-worker queries.
+    //
+    // The poller asks LHDN whether a `Submitted` row has finished
+    // validation. Outcome is one of: still pending (reschedule the poll
+    // event), Valid (set qr_url + 72h cancel window), Invalid (record
+    // reason), or Cancelled (LHDN-initiated cancel).
+    // ---------------------------------------------------------------------
+
+    pub async fn due_poll_events(
+        &self,
+        now: i64,
+        limit: i64,
+    ) -> Result<Vec<DuePollEvent>, RepoError> {
+        let rows = sqlx::query_as!(
+            DuePollEvent,
+            r#"
+            SELECT
+                id          AS "outbox_id!: i64",
+                invoice_id  AS "invoice_id!: String",
+                attempts    AS "attempts!: i64"
+            FROM outbox_events
+            WHERE kind = 'poll' AND available_at <= ?
+            ORDER BY available_at
+            LIMIT ?
+            "#,
+            now,
+            limit,
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    /// Fields the poller needs: the LHDN UUID it must query.
+    pub async fn load_for_poll(&self, id: &str) -> Result<Option<InvoiceForPoll>, RepoError> {
+        let row = sqlx::query_as!(
+            InvoiceForPoll,
+            r#"
+            SELECT
+                id          AS "id!: String",
+                invoice_ref AS "invoice_ref!: String",
+                lhdn_uuid   AS "lhdn_uuid: String"
+            FROM invoices
+            WHERE id = ?
+            "#,
+            id,
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    /// LHDN reported `Valid`. Persist `long_id`, `qr_url`, the validation
+    /// timestamp, the cancellation deadline, and remove the poll event.
+    pub async fn mark_valid(
+        &self,
+        invoice_id: &str,
+        outbox_id: i64,
+        long_id: &str,
+        qr_url: &str,
+        validated_at: i64,
+        cancellable_until: i64,
+    ) -> Result<(), RepoError> {
+        let now = OffsetDateTime::now_utc().unix_timestamp();
+        let mut tx = self.pool.begin().await?;
+        sqlx::query!(
+            r#"
+            UPDATE invoices
+            SET lhdn_status       = 'Valid',
+                long_id           = ?,
+                qr_url            = ?,
+                validated_at      = ?,
+                cancellable_until = ?,
+                error_json        = NULL,
+                updated_at        = ?
+            WHERE id = ?
+            "#,
+            long_id,
+            qr_url,
+            validated_at,
+            cancellable_until,
+            now,
+            invoice_id,
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query!("DELETE FROM outbox_events WHERE id = ?", outbox_id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// LHDN reported `Invalid`. Persist the reason and clear the poll event.
+    pub async fn mark_invalid(
+        &self,
+        invoice_id: &str,
+        outbox_id: i64,
+        reason_json: &str,
+    ) -> Result<(), RepoError> {
+        let now = OffsetDateTime::now_utc().unix_timestamp();
+        let mut tx = self.pool.begin().await?;
+        sqlx::query!(
+            r#"
+            UPDATE invoices
+            SET lhdn_status = 'Invalid',
+                error_json  = ?,
+                updated_at  = ?
+            WHERE id = ?
+            "#,
+            reason_json,
+            now,
+            invoice_id,
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query!("DELETE FROM outbox_events WHERE id = ?", outbox_id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// LHDN-initiated cancel observed via poll. Distinct from
+    /// `complete_cancel` (which fires after we *requested* the cancel).
+    pub async fn mark_cancelled_via_poll(
+        &self,
+        invoice_id: &str,
+        outbox_id: i64,
+        cancelled_at: i64,
+    ) -> Result<(), RepoError> {
+        let now = OffsetDateTime::now_utc().unix_timestamp();
+        let mut tx = self.pool.begin().await?;
+        sqlx::query!(
+            r#"
+            UPDATE invoices
+            SET lhdn_status  = 'Cancelled',
+                cancelled_at = ?,
+                updated_at   = ?
+            WHERE id = ?
+            "#,
+            cancelled_at,
+            now,
+            invoice_id,
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query!("DELETE FROM outbox_events WHERE id = ?", outbox_id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Poll could not succeed (terminal LHDN error or budget exhausted).
+    /// Records the error and drops the poll event. Does NOT change
+    /// `lhdn_status`: LHDN may still be processing the document, and an
+    /// operator should investigate.
+    pub async fn fail_poll(
+        &self,
+        invoice_id: &str,
+        outbox_id: i64,
+        error_json: &str,
+    ) -> Result<(), RepoError> {
+        let now = OffsetDateTime::now_utc().unix_timestamp();
+        let mut tx = self.pool.begin().await?;
+        sqlx::query!(
+            r#"
+            UPDATE invoices
+            SET error_json = ?,
+                updated_at = ?
+            WHERE id = ?
+            "#,
+            error_json,
+            now,
+            invoice_id,
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query!("DELETE FROM outbox_events WHERE id = ?", outbox_id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Validation still in progress (or transient error reading it).
+    /// Bumps the outbox event's local attempt counter and pushes the next
+    /// check out by `next_at`. Does NOT touch `invoices.attempts`, which
+    /// is reserved for delivery attempts.
+    pub async fn reschedule_poll(
+        &self,
+        outbox_id: i64,
+        new_attempts: i64,
+        next_at: i64,
+        last_error: Option<&str>,
+    ) -> Result<(), RepoError> {
+        sqlx::query!(
+            "UPDATE outbox_events SET available_at = ?, attempts = ?, last_error = ? WHERE id = ?",
+            next_at,
+            new_attempts,
+            last_error,
+            outbox_id,
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    // ---------------------------------------------------------------------
+    // Cancel API + canceller-worker queries.
+    //
+    // The API endpoint validates the row's state + cancellation window and
+    // enqueues a `cancel` outbox event in one transaction. The canceller
+    // worker picks it up, calls LHDN, and either marks Cancelled or
+    // surfaces the failure (without changing lhdn_status — LHDN didn't
+    // actually cancel the doc).
+    // ---------------------------------------------------------------------
+
+    /// Outcome of [`InvoiceRepo::request_cancellation`]. Mapped to HTTP
+    /// status codes by the API layer.
+    pub async fn request_cancellation(
+        &self,
+        invoice_ref: &str,
+        reason: &str,
+    ) -> Result<InvoiceRow, CancelError> {
+        let now = OffsetDateTime::now_utc().unix_timestamp();
+        let mut tx = self.pool.begin().await?;
+
+        let row = sqlx::query!(
+            r#"
+            SELECT
+                id                AS "id!: String",
+                lhdn_status       AS "lhdn_status!: String",
+                cancellable_until AS "cancellable_until: i64"
+            FROM invoices
+            WHERE invoice_ref = ?
+            "#,
+            invoice_ref,
+        )
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or(CancelError::NotFound)?;
+
+        if row.lhdn_status != "Valid" {
+            return Err(CancelError::NotCancellable {
+                state: row.lhdn_status,
+            });
+        }
+        match row.cancellable_until {
+            Some(deadline) if deadline > now => {}
+            Some(_) => return Err(CancelError::PastWindow),
+            None => return Err(CancelError::PastWindow),
+        }
+
+        let pending: i64 = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM outbox_events WHERE invoice_id = ? AND kind = 'cancel'",
+            row.id,
+        )
+        .fetch_one(&mut *tx)
+        .await?;
+        if pending > 0 {
+            return Err(CancelError::AlreadyRequested);
+        }
+
+        sqlx::query!(
+            r#"
+            UPDATE invoices
+            SET cancellation_reason = ?,
+                updated_at          = ?
+            WHERE id = ?
+            "#,
+            reason,
+            now,
+            row.id,
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query!(
+            "INSERT INTO outbox_events (invoice_id, kind, available_at) VALUES (?, 'cancel', ?)",
+            row.id,
+            now,
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        let updated = sqlx::query_as!(
+            InvoiceRow,
+            r#"
+            SELECT
+                id            AS "id!: String",
+                invoice_ref   AS "invoice_ref!: String",
+                lhdn_status   AS "lhdn_status!: String",
+                lhdn_uuid     AS "lhdn_uuid: String",
+                qr_url        AS "qr_url: String",
+                error_json    AS "error_json: String",
+                attempts      AS "attempts!: i64",
+                created_at    AS "created_at!: i64",
+                updated_at    AS "updated_at!: i64"
+            FROM invoices
+            WHERE id = ?
+            "#,
+            row.id,
+        )
+        .fetch_one(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+        Ok(updated)
+    }
+
+    pub async fn due_cancel_events(
+        &self,
+        now: i64,
+        limit: i64,
+    ) -> Result<Vec<DueCancelEvent>, RepoError> {
+        let rows = sqlx::query_as!(
+            DueCancelEvent,
+            r#"
+            SELECT
+                id          AS "outbox_id!: i64",
+                invoice_id  AS "invoice_id!: String",
+                attempts    AS "attempts!: i64"
+            FROM outbox_events
+            WHERE kind = 'cancel' AND available_at <= ?
+            ORDER BY available_at
+            LIMIT ?
+            "#,
+            now,
+            limit,
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    pub async fn load_for_cancel(&self, id: &str) -> Result<Option<InvoiceForCancel>, RepoError> {
+        let row = sqlx::query_as!(
+            InvoiceForCancel,
+            r#"
+            SELECT
+                id                  AS "id!: String",
+                invoice_ref         AS "invoice_ref!: String",
+                lhdn_uuid           AS "lhdn_uuid: String",
+                cancellation_reason AS "cancellation_reason: String",
+                cancellable_until   AS "cancellable_until: i64"
+            FROM invoices
+            WHERE id = ?
+            "#,
+            id,
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    /// LHDN confirmed the cancel: mark Cancelled, clear the outbox.
+    pub async fn complete_cancel(
+        &self,
+        invoice_id: &str,
+        outbox_id: i64,
+        cancelled_at: i64,
+    ) -> Result<(), RepoError> {
+        let now = OffsetDateTime::now_utc().unix_timestamp();
+        let mut tx = self.pool.begin().await?;
+        sqlx::query!(
+            r#"
+            UPDATE invoices
+            SET lhdn_status  = 'Cancelled',
+                cancelled_at = ?,
+                error_json   = NULL,
+                updated_at   = ?
+            WHERE id = ?
+            "#,
+            cancelled_at,
+            now,
+            invoice_id,
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query!("DELETE FROM outbox_events WHERE id = ?", outbox_id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Cancel call cannot succeed (terminal LHDN error or retries exhausted).
+    /// Leave `lhdn_status` alone (LHDN didn't actually cancel) — just record
+    /// the error and clear the outbox so the operator has to act.
+    pub async fn fail_cancel(
+        &self,
+        invoice_id: &str,
+        outbox_id: i64,
+        error_json: &str,
+    ) -> Result<(), RepoError> {
+        let now = OffsetDateTime::now_utc().unix_timestamp();
+        let mut tx = self.pool.begin().await?;
+        sqlx::query!(
+            r#"
+            UPDATE invoices
+            SET error_json = ?,
+                updated_at = ?
+            WHERE id = ?
+            "#,
+            error_json,
+            now,
+            invoice_id,
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query!("DELETE FROM outbox_events WHERE id = ?", outbox_id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Transient cancel failure: bump local attempts + back off.
+    pub async fn reschedule_cancel(
+        &self,
+        outbox_id: i64,
+        new_attempts: i64,
+        next_at: i64,
+        last_error: &str,
+    ) -> Result<(), RepoError> {
+        sqlx::query!(
+            "UPDATE outbox_events SET available_at = ?, attempts = ?, last_error = ? WHERE id = ?",
+            next_at,
+            new_attempts,
+            last_error,
+            outbox_id,
+        )
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 
@@ -321,11 +766,56 @@ pub struct DueSubmitEvent {
 }
 
 #[derive(Debug, Clone)]
+pub struct DuePollEvent {
+    pub outbox_id: i64,
+    pub invoice_id: String,
+    pub attempts: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct DueCancelEvent {
+    pub outbox_id: i64,
+    pub invoice_id: String,
+    pub attempts: i64,
+}
+
+#[derive(Debug, Clone)]
 pub struct InvoiceForSubmit {
     pub id: String,
     pub invoice_ref: String,
     pub payload_json: String,
     pub attempts: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct InvoiceForPoll {
+    pub id: String,
+    pub invoice_ref: String,
+    pub lhdn_uuid: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct InvoiceForCancel {
+    pub id: String,
+    pub invoice_ref: String,
+    pub lhdn_uuid: Option<String>,
+    pub cancellation_reason: Option<String>,
+    pub cancellable_until: Option<i64>,
+}
+
+/// Result of a cancel API request that the API layer maps to HTTP status.
+#[derive(Debug, thiserror::Error)]
+pub enum CancelError {
+    #[error("invoice not found")]
+    NotFound,
+    #[error("invoice cannot be cancelled in state {state}")]
+    NotCancellable { state: String },
+    #[error("invoice is past the LHDN cancellation window")]
+    PastWindow,
+    #[error("a cancellation request is already pending")]
+    AlreadyRequested,
+    #[error("database: {0}")]
+    Db(#[from] sqlx::Error),
 }
 
 /// Inputs for the happy-path completion update. Borrowed so the worker

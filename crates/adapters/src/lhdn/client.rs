@@ -225,13 +225,7 @@ impl LhdnClient {
             "{}/api/v1.0/documents/{}/details",
             self.inner.config.base_url, uuid
         );
-        let resp = self
-            .inner
-            .http
-            .get(&url)
-            .bearer_auth(&token)
-            .send()
-            .await?;
+        let resp = self.inner.http.get(&url).bearer_auth(&token).send().await?;
         parse_json_success(resp).await
     }
 

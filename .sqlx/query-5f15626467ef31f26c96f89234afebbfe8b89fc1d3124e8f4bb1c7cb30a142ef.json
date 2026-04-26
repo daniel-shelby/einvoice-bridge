@@ -1,0 +1,32 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT\n                id          AS \"outbox_id!: i64\",\n                invoice_id  AS \"invoice_id!: String\",\n                attempts    AS \"attempts!: i64\"\n            FROM outbox_events\n            WHERE kind = 'cancel' AND available_at <= ?\n            ORDER BY available_at\n            LIMIT ?\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "outbox_id!: i64",
+        "ordinal": 0,
+        "type_info": "Integer"
+      },
+      {
+        "name": "invoice_id!: String",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "attempts!: i64",
+        "ordinal": 2,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      true,
+      false,
+      false
+    ]
+  },
+  "hash": "5f15626467ef31f26c96f89234afebbfe8b89fc1d3124e8f4bb1c7cb30a142ef"
+}

@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            UPDATE invoices\n            SET cancellation_reason = ?,\n                updated_at          = ?\n            WHERE id = ?\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "f4c828c3ace1a003283837e6a574f17f75164848907781c5974ab72ba09f0264"
+}

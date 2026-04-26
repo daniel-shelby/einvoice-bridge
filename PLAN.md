@@ -161,7 +161,13 @@ is missing or the `.p12` cannot be decrypted.
    - **5b.** UBL fidelity to LHDN-acceptance level (parties, lines,
      totals, tax subtotals, full XAdES properties); iterate against
      real preprod sandbox responses
-6. Poller + cancel + QR URL
+6. Poller + cancel + QR URL ✅
+   - Poller picks up `poll` outbox events (enqueued by the submitter on
+     success), GETs `/documents/{uuid}/details`, transitions
+     `Submitted → Valid/Invalid/Cancelled`, fills `qr_url` and
+     `cancellable_until = validated_at + 72h`.
+   - `POST /v1/invoices/:ref/cancel` validates state + window and enqueues
+     a `cancel` outbox event; the canceller worker calls LHDN's PUT cancel.
 7. Hardening: retries, graceful shutdown, `/healthz`, observability
 
 ## 12. Out of scope for v1 (track for later)

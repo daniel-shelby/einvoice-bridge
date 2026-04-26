@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            UPDATE invoices\n            SET lhdn_status       = 'Valid',\n                long_id           = ?,\n                qr_url            = ?,\n                validated_at      = ?,\n                cancellable_until = ?,\n                error_json        = NULL,\n                updated_at        = ?\n            WHERE id = ?\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": []
+  },
+  "hash": "1d62b258a385df107b53b1522a45572f0d3ba8195ab9494045e9caae09d4d7f2"
+}

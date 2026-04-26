@@ -60,9 +60,7 @@ async fn mount_token(server: &MockServer) {
         .await;
 }
 
-async fn build(
-    server: &MockServer,
-) -> (Submitter, InvoiceRepo, SqlitePool) {
+async fn build(server: &MockServer) -> (Submitter, InvoiceRepo, SqlitePool) {
     let pool = fresh_pool().await;
     let repo = InvoiceRepo::new(pool.clone());
     let lhdn = LhdnClient::new(cfg(server), OauthTokenStore::new(pool.clone()));
@@ -120,7 +118,13 @@ async fn happy_path_submits_persists_and_clears_outbox() {
     assert_eq!(row.attempts, 0); // happy path doesn't bump attempts
     assert!(row.error_json.is_none());
 
-    assert_eq!(outbox_count(&pool).await, 0);
+    // The submit outbox event is replaced by a fresh `poll` event so the
+    // poller worker can take it from here.
+    let kinds: Vec<String> = sqlx::query_scalar("SELECT kind FROM outbox_events")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(kinds, vec!["poll".to_string()]);
 
     // The signed UBL doc + signature + doc digest land on the row.
     #[derive(sqlx::FromRow)]
@@ -129,13 +133,12 @@ async fn happy_path_submits_persists_and_clears_outbox() {
         signature: Option<String>,
         doc_digest: Option<String>,
     }
-    let persisted: PersistedSignFields = sqlx::query_as(
-        "SELECT ubl_xml, signature, doc_digest FROM invoices WHERE invoice_ref = ?",
-    )
-    .bind("INV-T1")
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let persisted: PersistedSignFields =
+        sqlx::query_as("SELECT ubl_xml, signature, doc_digest FROM invoices WHERE invoice_ref = ?")
+            .bind("INV-T1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     let ubl = persisted.ubl_xml.expect("ubl_xml populated");
     assert!(
         ubl.contains("UBLExtensions"),

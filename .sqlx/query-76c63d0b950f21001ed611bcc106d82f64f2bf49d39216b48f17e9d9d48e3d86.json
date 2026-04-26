@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO outbox_events (invoice_id, kind, available_at) VALUES (?, 'poll', ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "76c63d0b950f21001ed611bcc106d82f64f2bf49d39216b48f17e9d9d48e3d86"
+}

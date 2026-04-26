@@ -1,12 +1,12 @@
 //! LHDN MyInvois HTTP client.
 //!
 //! Submodules:
-//! - `error`     — typed `LhdnError` with `is_transient()` for retry policy.
-//! - `models`    — request/response shapes (camelCase wire format).
-//! - `oauth`     — token cache types + the 60s refresh leeway.
-//! - `token_repo`— SQLite-backed token persistence so we don't re-auth on
-//!                 every restart.
-//! - `client`    — `LhdnClient` (the public surface).
+//! - `error` — typed `LhdnError` with `is_transient()` for retry policy.
+//! - `models` — request/response shapes (camelCase wire format).
+//! - `oauth` — token cache types + the 60s refresh leeway.
+//! - `token_repo` — SQLite-backed token persistence so we don't re-auth on
+//!   every restart.
+//! - `client` — `LhdnClient` (the public surface).
 
 pub mod client;
 pub mod error;
@@ -35,6 +35,15 @@ impl LhdnEnv {
         match self {
             LhdnEnv::Preprod => "https://preprod-api.myinvois.hasil.gov.my",
             LhdnEnv::Prod => "https://api.myinvois.hasil.gov.my",
+        }
+    }
+
+    /// Public-facing MyInvois portal — used to build the QR share URL once
+    /// LHDN has validated a document and returned a `longId`.
+    pub fn portal_base_url(self) -> &'static str {
+        match self {
+            LhdnEnv::Preprod => "https://preprod.myinvois.hasil.gov.my",
+            LhdnEnv::Prod => "https://myinvois.hasil.gov.my",
         }
     }
 

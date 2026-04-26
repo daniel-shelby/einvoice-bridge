@@ -1,0 +1,32 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT\n                id                AS \"id!: String\",\n                lhdn_status       AS \"lhdn_status!: String\",\n                cancellable_until AS \"cancellable_until: i64\"\n            FROM invoices\n            WHERE invoice_ref = ?\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!: String",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "lhdn_status!: String",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "cancellable_until: i64",
+        "ordinal": 2,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      false,
+      true
+    ]
+  },
+  "hash": "cbbc47f57d95fb0589950c9ae905343ed209c52c5d4b142f7bd2668b79eccec0"
+}

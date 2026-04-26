@@ -6,7 +6,7 @@ use einvoice_adapters::{
     api::{self, ApiState},
     lhdn::{LhdnClient, LhdnConfig, LhdnEnv, OauthTokenStore},
     repo::InvoiceRepo,
-    worker::Submitter,
+    worker::{Canceller, Poller, Submitter},
 };
 use einvoice_domain::Signer;
 use sqlx::sqlite::SqlitePoolOptions;
@@ -18,7 +18,9 @@ async fn main() -> Result<()> {
     let _ = dotenvy::dotenv();
 
     fmt()
-        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        )
         .init();
 
     let database_url =
@@ -41,33 +43,41 @@ async fn main() -> Result<()> {
     let repo = InvoiceRepo::new(pool.clone());
     let api = api::router(ApiState { repo: repo.clone() });
 
-    // Submitter is optional in dev: LHDN_OFFLINE=true skips loading the
+    // Workers are optional in dev: LHDN_OFFLINE=true skips loading the
     // .p12 and OAuth credentials so `cargo run` works without preprod
     // creds. In production this is unset and we fail-fast on missing
     // config or an undecryptable certificate.
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-    let worker_handle = if env_bool("LHDN_OFFLINE") {
-        warn!("LHDN_OFFLINE=true — not spawning submitter; HTTP API only");
-        None
-    } else {
-        let env = parse_lhdn_env(&env_required("LHDN_ENV")?)?;
-        let client_id = env_required("LHDN_CLIENT_ID")?;
-        let client_secret = env_required("LHDN_CLIENT_SECRET")?;
-        let p12_path = env_required("LHDN_P12_PATH")?;
-        let p12_pass = env_required("LHDN_P12_PASSWORD")?;
+    let worker_handles: Vec<tokio::task::JoinHandle<anyhow::Result<()>>> =
+        if env_bool("LHDN_OFFLINE") {
+            warn!("LHDN_OFFLINE=true — not spawning workers; HTTP API only");
+            Vec::new()
+        } else {
+            let env = parse_lhdn_env(&env_required("LHDN_ENV")?)?;
+            let client_id = env_required("LHDN_CLIENT_ID")?;
+            let client_secret = env_required("LHDN_CLIENT_SECRET")?;
+            let p12_path = env_required("LHDN_P12_PATH")?;
+            let p12_pass = env_required("LHDN_P12_PASSWORD")?;
 
-        let p12_bytes = std::fs::read(&p12_path)
-            .with_context(|| format!("reading LHDN_P12_PATH={p12_path}"))?;
-        let signer =
-            Arc::new(Signer::from_p12(&p12_bytes, &p12_pass).context("decrypting .p12")?);
+            let p12_bytes = std::fs::read(&p12_path)
+                .with_context(|| format!("reading LHDN_P12_PATH={p12_path}"))?;
+            let signer =
+                Arc::new(Signer::from_p12(&p12_bytes, &p12_pass).context("decrypting .p12")?);
 
-        let config = LhdnConfig::for_env(env, client_id, client_secret);
-        let lhdn = LhdnClient::new(config, OauthTokenStore::new(pool.clone()));
-        let submitter = Submitter::new(repo, lhdn, signer);
+            let config = LhdnConfig::for_env(env, client_id, client_secret);
+            let lhdn = LhdnClient::new(config, OauthTokenStore::new(pool.clone()));
 
-        info!(?env, "spawning submitter worker");
-        Some(tokio::spawn(submitter.run(shutdown_rx.clone())))
-    };
+            let submitter = Submitter::new(repo.clone(), lhdn.clone(), signer);
+            let poller = Poller::new(repo.clone(), lhdn.clone(), env);
+            let canceller = Canceller::new(repo, lhdn);
+
+            info!(?env, "spawning submitter, poller, and canceller workers");
+            vec![
+                tokio::spawn(submitter.run(shutdown_rx.clone())),
+                tokio::spawn(poller.run(shutdown_rx.clone())),
+                tokio::spawn(canceller.run(shutdown_rx.clone())),
+            ]
+        };
 
     info!(%bind_addr, "einvoice-bridge listening");
     let listener = tokio::net::TcpListener::bind(bind_addr)
@@ -84,11 +94,11 @@ async fn main() -> Result<()> {
         .await
         .context("axum::serve")?;
 
-    if let Some(handle) = worker_handle {
+    for handle in worker_handles {
         match handle.await {
             Ok(Ok(())) => {}
-            Ok(Err(err)) => warn!(error = %err, "submitter exited with error"),
-            Err(err) => warn!(error = %err, "submitter task panicked"),
+            Ok(Err(err)) => warn!(error = %err, "worker exited with error"),
+            Err(err) => warn!(error = %err, "worker task panicked"),
         }
     }
 

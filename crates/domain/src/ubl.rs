@@ -106,10 +106,7 @@ pub fn build_signed_document(
 fn build_unsigned_invoice(pos: &Value, code_number: &str) -> Value {
     let issue_date = pos.get("issue_date").and_then(Value::as_str).unwrap_or("");
     let issue_time = pos.get("issue_time").and_then(Value::as_str).unwrap_or("");
-    let currency = pos
-        .get("currency")
-        .and_then(Value::as_str)
-        .unwrap_or("MYR");
+    let currency = pos.get("currency").and_then(Value::as_str).unwrap_or("MYR");
 
     json!({
         "_D": "urn:oasis:names:specification:ubl:schema:xsd:Invoice-2",
