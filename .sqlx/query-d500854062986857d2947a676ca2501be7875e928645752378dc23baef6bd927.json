@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            INSERT INTO oauth_tokens (env, access_token, expires_at)\n            VALUES (?, ?, ?)\n            ON CONFLICT(env) DO UPDATE SET\n                access_token = excluded.access_token,\n                expires_at   = excluded.expires_at\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "d500854062986857d2947a676ca2501be7875e928645752378dc23baef6bd927"
+}

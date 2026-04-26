@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT access_token AS \"access_token!: String\",\n                   expires_at   AS \"expires_at!: i64\"\n            FROM oauth_tokens\n            WHERE env = ?\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "access_token!: String",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "expires_at!: i64",
+        "ordinal": 1,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "b727f8e33be9b6101479ff2fc65c80368d0b37ba9dc6696f0769967e48948eac"
+}

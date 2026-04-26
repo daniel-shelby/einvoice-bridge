@@ -57,6 +57,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 thiserror = "1"
 anyhow = "1"
 
+# Test doubles
+wiremock = "0.6"
+
 # Internal crates
 einvoice-domain = { path = "crates/domain" }
 einvoice-adapters = { path = "crates/adapters" }
