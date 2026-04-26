@@ -151,10 +151,16 @@ is missing or the `.p12` cannot be decrypted.
 ## 11. Build order
 
 1. Cargo workspace + migrations + `.env.example` ✅
-2. Domain canonicalisation + signer with fixture tests (no DB, no HTTP)
-3. SQLx repo + `POST /v1/invoices` returning 202
-4. LHDN client with OAuth token cache (against preprod)
+2. Domain canonicalisation + signer with fixture tests (no DB, no HTTP) ✅
+3. SQLx repo + `POST /v1/invoices` returning 202 ✅
+4. LHDN client with OAuth token cache (against preprod) ✅
 5. Submitter worker end-to-end on preprod sandbox
+   - **5a.** Pipeline scaffold: minimal UBL builder, signing flow,
+     submitter loop, retry/backoff, `LHDN_OFFLINE` dev escape hatch,
+     wiremock-based integration tests ✅
+   - **5b.** UBL fidelity to LHDN-acceptance level (parties, lines,
+     totals, tax subtotals, full XAdES properties); iterate against
+     real preprod sandbox responses
 6. Poller + cancel + QR URL
 7. Hardening: retries, graceful shutdown, `/healthz`, observability
 

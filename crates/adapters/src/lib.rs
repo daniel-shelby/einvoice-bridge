@@ -6,3 +6,4 @@
 pub mod api;
 pub mod lhdn;
 pub mod repo;
+pub mod worker;

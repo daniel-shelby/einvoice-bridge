@@ -125,6 +125,220 @@ impl InvoiceRepo {
         .await?;
         Ok(row)
     }
+
+    // ---------------------------------------------------------------------
+    // Submitter-worker queries.
+    //
+    // These deliberately don't go through the public API; they're the
+    // worker's local lifecycle. The worker pulls due events, loads the row
+    // (with payload_json), and either marks the invoice submitted/failed
+    // or reschedules with a backoff.
+    // ---------------------------------------------------------------------
+
+    /// Outbox events of kind `submit` whose `available_at` has elapsed.
+    pub async fn due_submit_events(
+        &self,
+        now: i64,
+        limit: i64,
+    ) -> Result<Vec<DueSubmitEvent>, RepoError> {
+        let rows = sqlx::query_as!(
+            DueSubmitEvent,
+            r#"
+            SELECT
+                id          AS "outbox_id!: i64",
+                invoice_id  AS "invoice_id!: String"
+            FROM outbox_events
+            WHERE kind = 'submit' AND available_at <= ?
+            ORDER BY available_at
+            LIMIT ?
+            "#,
+            now,
+            limit,
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    /// Load the fields the submitter actually needs.
+    pub async fn load_for_submit(
+        &self,
+        id: &str,
+    ) -> Result<Option<InvoiceForSubmit>, RepoError> {
+        let row = sqlx::query_as!(
+            InvoiceForSubmit,
+            r#"
+            SELECT
+                id            AS "id!: String",
+                invoice_ref   AS "invoice_ref!: String",
+                payload_json  AS "payload_json!: String",
+                attempts      AS "attempts!: i64"
+            FROM invoices
+            WHERE id = ?
+            "#,
+            id,
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    /// Atomically: mark the invoice as `Submitted`, persist the signed
+    /// UBL + signature + doc digest, and remove the outbox event.
+    pub async fn complete_submission(
+        &self,
+        invoice_id: &str,
+        outbox_id: i64,
+        completion: SubmissionCompletion<'_>,
+    ) -> Result<(), RepoError> {
+        let now = OffsetDateTime::now_utc().unix_timestamp();
+        let mut tx = self.pool.begin().await?;
+        sqlx::query!(
+            r#"
+            UPDATE invoices
+            SET lhdn_status         = 'Submitted',
+                lhdn_submission_uid = ?,
+                lhdn_uuid           = ?,
+                signature           = ?,
+                ubl_xml             = ?,
+                doc_digest          = ?,
+                error_json          = NULL,
+                submitted_at        = ?,
+                next_attempt_at     = NULL,
+                updated_at          = ?
+            WHERE id = ?
+            "#,
+            completion.submission_uid,
+            completion.lhdn_uuid,
+            completion.signature_b64,
+            completion.signed_document_utf8,
+            completion.document_hash_b64,
+            now,
+            now,
+            invoice_id,
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query!("DELETE FROM outbox_events WHERE id = ?", outbox_id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Atomically: mark the invoice as `Failed`, persist the final
+    /// attempts count + error JSON, and remove the outbox event.
+    /// Caller supplies the final `attempts` value — pass the existing
+    /// invoice.attempts when the failure is upstream of LHDN (e.g. local
+    /// validation), or an incremented value when LHDN itself rejected.
+    pub async fn fail_permanently(
+        &self,
+        invoice_id: &str,
+        outbox_id: i64,
+        attempts: i64,
+        error_json: &str,
+    ) -> Result<(), RepoError> {
+        let now = OffsetDateTime::now_utc().unix_timestamp();
+        let mut tx = self.pool.begin().await?;
+        sqlx::query!(
+            r#"
+            UPDATE invoices
+            SET lhdn_status     = 'Failed',
+                attempts        = ?,
+                error_json      = ?,
+                next_attempt_at = NULL,
+                updated_at      = ?
+            WHERE id = ?
+            "#,
+            attempts,
+            error_json,
+            now,
+            invoice_id,
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query!("DELETE FROM outbox_events WHERE id = ?", outbox_id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Reschedule a transient failure: bump attempts, update
+    /// next_attempt_at + the outbox event's `available_at`, and stash
+    /// the latest error for ops visibility.
+    ///
+    /// `error_json` is the structured body that lands in
+    /// `invoices.error_json` (matching the shape `fail_permanently`
+    /// uses). `last_error` is a short human-readable string written to
+    /// `outbox_events.last_error` for queue debugging.
+    pub async fn reschedule(
+        &self,
+        invoice_id: &str,
+        outbox_id: i64,
+        new_attempts: i64,
+        next_attempt_at: i64,
+        error_json: &str,
+        last_error: &str,
+    ) -> Result<(), RepoError> {
+        let now = OffsetDateTime::now_utc().unix_timestamp();
+        let mut tx = self.pool.begin().await?;
+        sqlx::query!(
+            r#"
+            UPDATE invoices
+            SET attempts        = ?,
+                error_json      = ?,
+                next_attempt_at = ?,
+                updated_at      = ?
+            WHERE id = ?
+            "#,
+            new_attempts,
+            error_json,
+            next_attempt_at,
+            now,
+            invoice_id,
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query!(
+            "UPDATE outbox_events SET available_at = ?, attempts = ?, last_error = ? WHERE id = ?",
+            next_attempt_at,
+            new_attempts,
+            last_error,
+            outbox_id,
+        )
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct DueSubmitEvent {
+    pub outbox_id: i64,
+    pub invoice_id: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct InvoiceForSubmit {
+    pub id: String,
+    pub invoice_ref: String,
+    pub payload_json: String,
+    pub attempts: i64,
+}
+
+/// Inputs for the happy-path completion update. Borrowed so the worker
+/// doesn't have to clone the (potentially large) signed document.
+#[derive(Debug, Clone, Copy)]
+pub struct SubmissionCompletion<'a> {
+    pub submission_uid: &'a str,
+    pub lhdn_uuid: &'a str,
+    pub signature_b64: &'a str,
+    /// The signed canonical UBL document as UTF-8 — stored in `ubl_xml`
+    /// (the column name is a misnomer; we use JSON UBL).
+    pub signed_document_utf8: &'a str,
+    pub document_hash_b64: &'a str,
 }
 
 fn map_unique_violation(err: sqlx::Error) -> RepoError {

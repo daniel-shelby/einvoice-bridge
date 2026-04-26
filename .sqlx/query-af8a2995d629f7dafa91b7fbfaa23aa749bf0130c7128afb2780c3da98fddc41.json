@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            UPDATE invoices\n            SET lhdn_status         = 'Submitted',\n                lhdn_submission_uid = ?,\n                lhdn_uuid           = ?,\n                signature           = ?,\n                ubl_xml             = ?,\n                doc_digest          = ?,\n                error_json          = NULL,\n                submitted_at        = ?,\n                next_attempt_at     = NULL,\n                updated_at          = ?\n            WHERE id = ?\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 8
+    },
+    "nullable": []
+  },
+  "hash": "af8a2995d629f7dafa91b7fbfaa23aa749bf0130c7128afb2780c3da98fddc41"
+}

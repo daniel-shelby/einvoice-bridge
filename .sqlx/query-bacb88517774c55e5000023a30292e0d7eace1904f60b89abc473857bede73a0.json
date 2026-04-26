@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            UPDATE invoices\n            SET lhdn_status     = 'Failed',\n                attempts        = ?,\n                error_json      = ?,\n                next_attempt_at = NULL,\n                updated_at      = ?\n            WHERE id = ?\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "bacb88517774c55e5000023a30292e0d7eace1904f60b89abc473857bede73a0"
+}

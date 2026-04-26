@@ -45,7 +45,7 @@ p12 = "0.6"
 base64 = "0.22"
 
 # Time + IDs
-time = { version = "0.3", features = ["serde", "macros"] }
+time = { version = "0.3", features = ["serde", "macros", "formatting", "parsing"] }
 uuid = { version = "1", features = ["v7", "serde"] }
 
 # Config + observability

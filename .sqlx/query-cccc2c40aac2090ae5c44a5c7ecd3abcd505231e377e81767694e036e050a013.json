@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            SELECT\n                id            AS \"id!: String\",\n                invoice_ref   AS \"invoice_ref!: String\",\n                payload_json  AS \"payload_json!: String\",\n                attempts      AS \"attempts!: i64\"\n            FROM invoices\n            WHERE id = ?\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!: String",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "invoice_ref!: String",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "payload_json!: String",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "attempts!: i64",
+        "ordinal": 3,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "cccc2c40aac2090ae5c44a5c7ecd3abcd505231e377e81767694e036e050a013"
+}
