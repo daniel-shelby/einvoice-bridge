@@ -1,1 +1,17 @@
 /target
+
+# Local config and secrets — never commit these
+.env
+.env.local
+/data/
+/secrets/
+*.p12
+*.pfx
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Claude Code local session settings
+.claude/

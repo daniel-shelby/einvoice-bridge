@@ -1,0 +1,68 @@
+{
+  "db_name": "SQLite",
+  "query": "\n            INSERT INTO invoices (\n                id, invoice_ref, payload_json, lhdn_status, attempts,\n                created_at, updated_at, next_attempt_at\n            ) VALUES (?, ?, ?, 'Pending', 0, ?, ?, ?)\n            RETURNING\n                id            AS \"id!: String\",\n                invoice_ref   AS \"invoice_ref!: String\",\n                lhdn_status   AS \"lhdn_status!: String\",\n                lhdn_uuid     AS \"lhdn_uuid: String\",\n                qr_url        AS \"qr_url: String\",\n                error_json    AS \"error_json: String\",\n                attempts      AS \"attempts!: i64\",\n                created_at    AS \"created_at!: i64\",\n                updated_at    AS \"updated_at!: i64\"\n            ",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!: String",
+        "ordinal": 0,
+        "type_info": "Text"
+      },
+      {
+        "name": "invoice_ref!: String",
+        "ordinal": 1,
+        "type_info": "Text"
+      },
+      {
+        "name": "lhdn_status!: String",
+        "ordinal": 2,
+        "type_info": "Text"
+      },
+      {
+        "name": "lhdn_uuid: String",
+        "ordinal": 3,
+        "type_info": "Text"
+      },
+      {
+        "name": "qr_url: String",
+        "ordinal": 4,
+        "type_info": "Text"
+      },
+      {
+        "name": "error_json: String",
+        "ordinal": 5,
+        "type_info": "Text"
+      },
+      {
+        "name": "attempts!: i64",
+        "ordinal": 6,
+        "type_info": "Integer"
+      },
+      {
+        "name": "created_at!: i64",
+        "ordinal": 7,
+        "type_info": "Integer"
+      },
+      {
+        "name": "updated_at!: i64",
+        "ordinal": 8,
+        "type_info": "Integer"
+      }
+    ],
+    "parameters": {
+      "Right": 6
+    },
+    "nullable": [
+      true,
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "8a188eb52cb379c589f2cdd77431e9bd6c3a8e25c90ebb2716e0080a89fa94cd"
+}

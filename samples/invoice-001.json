@@ -1,0 +1,76 @@
+{
+  "invoice_ref": "INV-001",
+  "issue_date": "2026-04-26",
+  "issue_time": "14:30:00",
+  "currency": "MYR",
+  "supplier": {
+    "tin": "C12345678901",
+    "brn": "202301234567",
+    "name": "Contoh Sdn Bhd",
+    "address": {
+      "line1": "No. 1, Jalan Contoh",
+      "city": "Kuala Lumpur",
+      "postcode": "50000",
+      "state": "WP Kuala Lumpur",
+      "country": "MYS"
+    },
+    "contact": {
+      "phone": "+60312345678",
+      "email": "billing@contoh.example"
+    },
+    "sst_registration": "W10-1234-56789012"
+  },
+  "buyer": {
+    "tin": "C98765432109",
+    "brn": "202109876543",
+    "name": "Pelanggan Sdn Bhd",
+    "address": {
+      "line1": "Lot 2, Jalan Pelanggan",
+      "city": "Petaling Jaya",
+      "postcode": "47800",
+      "state": "Selangor",
+      "country": "MYS"
+    },
+    "contact": {
+      "phone": "+60387654321",
+      "email": "ap@pelanggan.example"
+    }
+  },
+  "lines": [
+    {
+      "id": "1",
+      "description": "Consultancy services — April 2026",
+      "classification_code": "022",
+      "quantity": 1,
+      "unit": "EA",
+      "unit_price": 5000.00,
+      "subtotal": 5000.00,
+      "tax_rate": 8.0,
+      "tax_amount": 400.00,
+      "total": 5400.00
+    },
+    {
+      "id": "2",
+      "description": "On-site support visit",
+      "classification_code": "022",
+      "quantity": 2,
+      "unit": "EA",
+      "unit_price": 750.00,
+      "subtotal": 1500.00,
+      "tax_rate": 8.0,
+      "tax_amount": 120.00,
+      "total": 1620.00
+    }
+  ],
+  "totals": {
+    "subtotal": 6500.00,
+    "tax_total": 520.00,
+    "grand_total": 7020.00,
+    "rounding": 0.00,
+    "payable": 7020.00
+  },
+  "payment": {
+    "mode": "transfer",
+    "terms": "Net 30"
+  }
+}

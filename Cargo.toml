@@ -1,6 +1,67 @@
-[package]
-name = "einvoice-bridge"
+[workspace]
+resolver = "3"
+members = [
+    "crates/domain",
+    "crates/adapters",
+    "crates/bin",
+]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.85"
+publish = false
 
-[dependencies]
+[workspace.dependencies]
+# Async runtime + web
+tokio = { version = "1", features = ["full"] }
+axum = "0.8"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["trace"] }
+
+# HTTP client (rustls so we don't link system OpenSSL on macOS)
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+# Database
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio-rustls",
+    "sqlite",
+    "macros",
+    "migrate",
+    "time",
+    "uuid",
+] }
+
+# Serialisation
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_jcs = "0.1"                      # RFC 8785 JSON canonicalisation
+quick-xml = { version = "0.36", features = ["serialize"] }
+
+# Crypto: pure-Rust stack so M-series Macs build with no system OpenSSL
+rsa = { version = "0.9", features = ["sha2"] }
+sha2 = "0.10"
+p12 = "0.6"
+base64 = "0.22"
+
+# Time + IDs
+time = { version = "0.3", features = ["serde", "macros"] }
+uuid = { version = "1", features = ["v7", "serde"] }
+
+# Config + observability
+dotenvy = "0.15"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Errors
+thiserror = "1"
+anyhow = "1"
+
+# Internal crates
+einvoice-domain = { path = "crates/domain" }
+einvoice-adapters = { path = "crates/adapters" }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
